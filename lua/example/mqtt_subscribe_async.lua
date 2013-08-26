@@ -70,11 +70,14 @@ if (args.debug) then MQTT.Utility.set_debug(true) end
 
 if (args.keepalive) then MQTT.client.KEEP_ALIVE_TIME = args.keepalive end
 
-local mqtt_client = MQTT.client.create(args.host, args.port, callback)
+local mqtt_client
 
 
+-- returns nil when it's good
 function do_connect()
     local err
+    print("Reconnecting..")
+    mqtt_client = MQTT.client.create(args.host, args.port, callback)
     if (args.will_message == "."  or  args.will_topic == ".") then
         err = mqtt_client:connect(args.id)
     else
@@ -84,11 +87,8 @@ function do_connect()
         )
     end
     if not err then 
-        print("do connect got first: err=", err)
         err = mqtt_client:subscribe({args.topic})
     end
-    print("do connect final: err=", err)
-    -- two nils here means everything was fine!
     return err
 end
 
@@ -96,25 +96,26 @@ do_connect()
 
 function stay_connected()
     local connected = true
+    local last_connect_attempt = os.time()
+    local RECONN_SPEED = 10
     while (true) do
-        ok, result = pcall(function()
+        connected, result = pcall(function()
             local handler_result = mqtt_client:handler()
-            print("handler returned: ", tostring(handler_result))
             return handler_result
         end)
-        print(string.format("handler pcall gave us result=%s, ok=%s", tostring(result), tostring(ok)))
         coroutine.yield()
-        if not ok then connected = false end
         if result then connected = false end
         while (not connected) do
-            print("we got an err", err)
-            ok, result = pcall(function()
-                return do_connect()
-            end)
-            print(string.format("do_connect pcall returned: ok=%s, result=%s", tostring(ok), tostring(result)))
-            if not ok then connected = false end
-            if result then connected = false end
-            coroutine.yield()
+            if (os.time() - last_connect_attempt < RECONN_SPEED) then
+                coroutine.yield()
+            else
+                connected, result = pcall(function()
+                    return do_connect()
+                end)
+                if result then connected = false end
+                last_connect_attempt = os.time()
+                coroutine.yield()
+            end
         end
     end
 end
@@ -122,10 +123,12 @@ end
 local error_message = nil
 
 local co = coroutine.create(stay_connected)
+local ticker = 0
 while (true) do
     xx = coroutine.resume(co)
-    socket.sleep(0.5)
-    print(string.format("co.status() = %s", coroutine.status(co)))
+    print("UNINTERRUPTIBLE! ", ticker)
+    ticker = ticker + 1
+    socket.sleep(0.2)
 end 
 
 if (error_message == nil) then
